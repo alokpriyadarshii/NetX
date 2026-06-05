@@ -8,41 +8,8 @@ NetX is designed to be small, fast, non caching, and suitable for local machines
 
 ## Preview
 
-![NetX Architecture](images/architecture.png)
-
-![NetX Dashboard](images/dashboard.png)
-
-The included dashboard performs live DNS checks through the local NetX listener.
-
-```bash
-python3 dashboard/server.py
-```
-
-Default dashboard URL:
-
-```text
-http://127.0.0.1:8765
-```
-
-Default dashboard environment variables:
-
-```bash
-NETX_HOST=127.0.0.1
-NETX_PORT=5053
-DASHBOARD_HOST=127.0.0.1
-DASHBOARD_PORT=8765
-```
-
-The dashboard exposes:
-
-```text
-/api/status
-/api/resolve?name=openai.com&type=A
-```
-
-Supported query types in the dashboard are `A` and `AAAA`.
-
----
+<img src="./images/preview-1.png" alt="NetX Preview 1" width="100%" />
+<img src="./images/preview-2.png" alt="NetX Preview 2" width="100%" />
 
 ## Features
 
