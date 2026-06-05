@@ -437,16 +437,4 @@ Fallback to HTTP/1.1:
 ./build/NetX -x
 ```
 
----
 
-## Repository Hygiene
-
-Before pushing this project to GitHub, remove generated and OS-specific files from the repository:
-
-```text
-build/
-.DS_Store
-__MACOSX/
-```
-
-The `.gitignore` should keep build output and macOS metadata out of version control.
