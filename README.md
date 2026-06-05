@@ -1,1 +1,470 @@
-# RelationalDBX
+# NetX
+
+**NetX** is a lightweight **DNS over HTTPS (DoH) proxy** written in C. It listens for normal DNS requests over **UDP/TCP** on a local address, forwards them to an upstream **RFC 8484 DoH resolver** over HTTPS, and sends the DNS response back to the original client.
+
+NetX is designed to be small, fast, non caching, and suitable for local machines, routers, and embedded Linux systems.
+
+---
+
+## Preview
+
+![NetX Architecture](images/architecture.png)
+
+![NetX Dashboard](images/dashboard.png)
+
+The included dashboard performs live DNS checks through the local NetX listener.
+
+```bash
+python3 dashboard/server.py
+```
+
+Default dashboard URL:
+
+```text
+http://127.0.0.1:8765
+```
+
+Default dashboard environment variables:
+
+```bash
+NETX_HOST=127.0.0.1
+NETX_PORT=5053
+DASHBOARD_HOST=127.0.0.1
+DASHBOARD_PORT=8765
+```
+
+The dashboard exposes:
+
+```text
+/api/status
+/api/resolve?name=openai.com&type=A
+```
+
+Supported query types in the dashboard are `A` and `AAAA`.
+
+---
+
+## Features
+
+- DNS-over-HTTPS proxy for standard UDP and TCP DNS clients.
+- Non-caching design; can sit in front of `dnsmasq` or another caching resolver.
+- RFC 8484 wire-format DoH support.
+- HTTP/2 by default through libcurl multi.
+- Optional HTTP/1.1 mode.
+- Optional HTTP/3 / QUIC mode when libcurl supports it.
+- Bootstrap DNS polling with c-ares.
+- Local source address binding for outbound HTTPS/bootstrap DNS.
+- EDNS-aware UDP truncation support.
+- Single-process, event-driven runtime using libev.
+- Logging, statistics, flight recorder, Munin plugin, systemd service, dashboard, Robot Framework tests, and CI workflow.
+
+---
+
+## Requirements
+
+NetX depends on:
+
+- C compiler
+- CMake 3.10+
+- c-ares 1.11.0+
+- libcurl 7.66.0+
+- libev 4.25+
+- Optional: libsystemd development package
+
+### Ubuntu / Debian
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  cmake \
+  build-essential \
+  libc-ares-dev \
+  libcurl4-openssl-dev \
+  libev-dev \
+  libsystemd-dev
+```
+
+### Fedora / RHEL-based systems
+
+```bash
+sudo dnf install -y \
+  cmake \
+  gcc \
+  make \
+  c-ares-devel \
+  libcurl-devel \
+  libev-devel \
+  systemd-devel
+```
+
+### macOS
+
+```bash
+brew install cmake c-ares curl libev
+```
+
+If CMake cannot find Homebrew curl headers, make sure Homebrew paths are available in your shell environment.
+
+---
+
+## Build
+
+From the project root:
+
+```bash
+cmake -S . -B build
+cmake --build build
+```
+
+The binary will be created at:
+
+```text
+build/NetX
+```
+
+Run version check:
+
+```bash
+./build/NetX -V
+```
+
+Show help:
+
+```bash
+./build/NetX -h
+```
+
+---
+
+## Quick Start
+
+### Run with default Google DoH resolver
+
+```bash
+./build/NetX -a 127.0.0.1 -p 5053 -r https://dns.google/dns-query -v -v
+```
+
+Test with `dig`:
+
+```bash
+dig @127.0.0.1 -p 5053 openai.com
+```
+
+### Use Cloudflare DoH
+
+```bash
+./build/NetX \
+  -a 127.0.0.1 \
+  -p 5053 \
+  -b 1.1.1.1,1.0.0.1 \
+  -r https://cloudflare-dns.com/dns-query \
+  -v -v
+```
+
+### Use AdGuard DoH
+
+```bash
+./build/NetX \
+  -a 127.0.0.1 \
+  -p 5053 \
+  -b 94.140.14.14,94.140.15.15 \
+  -r https://dns.adguard.com/dns-query \
+  -v -v
+```
+
+---
+
+## Common Usage
+
+### Run as a daemon
+
+```bash
+sudo ./build/NetX \
+  -u nobody \
+  -g nogroup \
+  -d \
+  -b 8.8.8.8,8.8.4.4 \
+  -r https://dns.google/dns-query
+```
+
+### Bind to all local interfaces
+
+```bash
+./build/NetX -a 0.0.0.0 -p 5053
+```
+
+### Force IPv4 resolver addresses
+
+```bash
+./build/NetX -4
+```
+
+### Use HTTP/1.1 instead of HTTP/2
+
+```bash
+./build/NetX -x
+```
+
+### Use HTTP/3 / QUIC only
+
+```bash
+./build/NetX -q
+```
+
+This requires a libcurl build with HTTP/3 support.
+
+### Use an HTTP/SOCKS proxy
+
+```bash
+./build/NetX -t socks5h://127.0.0.1:1080
+```
+
+### Print statistics every 300 seconds
+
+```bash
+./build/NetX -s 300
+```
+
+### Increase logging verbosity
+
+```bash
+./build/NetX -v -v -v
+```
+
+---
+
+## Important Options
+
+| Option | Description |
+|---|---|
+| `-a <listen_addr>` | Local address to bind. Default: `127.0.0.1` |
+| `-p <listen_port>` | Local DNS listener port. Default: `5053` |
+| `-T <limit>` | TCP client limit. Default: `20` |
+| `-b <dns_servers>` | Bootstrap DNS servers for resolving the DoH hostname |
+| `-i <seconds>` | Bootstrap DNS polling interval. Default: `120` |
+| `-4` | Force IPv4 resolver hostnames |
+| `-r <resolver_url>` | DoH resolver URL. Default: `https://dns.google/dns-query` |
+| `-t <proxy_server>` | Optional HTTP/SOCKS proxy |
+| `-S <source_addr>` | Source address for outbound HTTPS and bootstrap DNS |
+| `-x` | Use HTTP/1.1 instead of HTTP/2 |
+| `-q` | Use HTTP/3 / QUIC only |
+| `-m <seconds>` | Maximum HTTPS connection idle reuse time |
+| `-L <seconds>` | Tolerated connection-loss time for reused connections |
+| `-C <ca_path>` | Custom CA certificate path |
+| `-c <dscp>` | DSCP codepoint for upstream HTTPS sockets |
+| `-d` | Daemonize |
+| `-u <user>` | Drop privileges to user |
+| `-g <group>` | Drop privileges to group |
+| `-l <logfile>` | Log file path. Default: stdout |
+| `-s <seconds>` | Statistics print interval |
+| `-F <count>` | Flight recorder buffer size |
+| `-V` | Print version and exit |
+| `-h` | Print help and exit |
+
+---
+
+## Install
+
+After building:
+
+```bash
+sudo cmake --install build
+```
+
+This installs:
+
+- NetX binary
+- systemd service file
+- Munin plugin if Munin directories exist
+
+Enable and start the service:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable NetX
+sudo systemctl start NetX
+sudo systemctl status NetX
+```
+
+Override service options:
+
+```bash
+sudo systemctl edit NetX.service
+```
+
+Example override:
+
+```ini
+[Service]
+ExecStart=
+ExecStart=/usr/local/bin/NetX -v -v -r https://cloudflare-dns.com/dns-query
+```
+
+Restart after changes:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart NetX
+```
+
+---
+
+## Docker
+
+Example Docker run using AdGuard DNS:
+
+```bash
+docker run --name NetX -p 5053:5053/udp \
+  -e DNS_SERVERS="94.140.14.14,94.140.15.15" \
+  -e RESOLVER_URL="https://dns.adguard.com/dns-query" \
+  -d alokpriyadarshii/netx \
+  -4 -vvv
+```
+
+Then test:
+
+```bash
+dig @127.0.0.1 -p 5053 openai.com
+```
+
+---
+
+## Testing
+
+Install Robot Framework:
+
+```bash
+pip3 install robotframework
+```
+
+Run functional tests:
+
+```bash
+python3 -m robot.run tests/robot/functional_tests.robot
+```
+
+Docker-based tests:
+
+```bash
+tests/docker/run_all_tests.sh
+```
+
+The test suite covers UDP, TCP, HTTP behavior, truncation behavior, source address binding, and Valgrind checks.
+
+---
+
+## Project Structure
+
+```text
+NetX/
+├── .github/
+│   └── workflows/
+│       └── cmake.yml
+├── dashboard/
+│   ├── index.html
+│   └── server.py
+├── images/
+│   ├── architecture.png
+│   └── dashboard.png
+├── munin/
+│   ├── NetX.config
+│   └── NetX.plugin
+├── src/
+│   ├── dns_common.h
+│   ├── dns_listener.h
+│   ├── dns_listener_tcp.c
+│   ├── dns_listener_tcp.h
+│   ├── dns_listener_udp.c
+│   ├── dns_listener_udp.h
+│   ├── dns_poller.c
+│   ├── dns_poller.h
+│   ├── dns_truncate.c
+│   ├── dns_truncate.h
+│   ├── doh_proxy.c
+│   ├── doh_proxy.h
+│   ├── https_client.c
+│   ├── https_client.h
+│   ├── logging.c
+│   ├── logging.h
+│   ├── main.c
+│   ├── options.c
+│   ├── options.h
+│   ├── ring_buffer.c
+│   ├── ring_buffer.h
+│   ├── stat.c
+│   └── stat.h
+├── tests/
+│   ├── docker/
+│   │   ├── Dockerfile
+│   │   └── run_all_tests.sh
+│   └── robot/
+│       ├── DnsTcpClient.py
+│       ├── functional_tests.robot
+│       └── valgrind.supp
+├── .gitignore
+├── CMakeLists.txt
+├── LICENSE
+├── NetX.service.in
+├── README.md
+└── development_build_with_http3.sh
+```
+
+---
+
+## Troubleshooting
+
+### Port already in use
+
+If port `5053` is busy, run NetX on another port:
+
+```bash
+./build/NetX -p 55353
+```
+
+Test with:
+
+```bash
+dig @127.0.0.1 -p 55353 openai.com
+```
+
+### No response from resolver
+
+Try increasing logs:
+
+```bash
+./build/NetX -v -v -v
+```
+
+Also verify network access to the DoH endpoint and bootstrap DNS servers.
+
+### Cloudflare / Google hostname resolution problem
+
+Use bootstrap DNS servers explicitly:
+
+```bash
+./build/NetX -b 8.8.8.8,1.1.1.1
+```
+
+### HTTP/2 problems with libcurl
+
+Fallback to HTTP/1.1:
+
+```bash
+./build/NetX -x
+```
+
+---
+
+## Repository Hygiene
+
+Before pushing this project to GitHub, remove generated and OS-specific files from the repository:
+
+```text
+build/
+.DS_Store
+__MACOSX/
+```
+
+The `.gitignore` should keep build output and macOS metadata out of version control.
+
+---
