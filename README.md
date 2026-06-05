@@ -13,6 +13,22 @@ NetX is designed to be small, fast, non caching, and suitable for local machines
 
 ---
 
+## Features
+
+- DNS-over-HTTPS proxy for standard UDP and TCP DNS clients.
+- Non-caching design; can sit in front of `dnsmasq` or another caching resolver.
+- RFC 8484 wire-format DoH support.
+- HTTP/2 by default through libcurl multi.
+- Optional HTTP/1.1 mode.
+- Optional HTTP/3 / QUIC mode when libcurl supports it.
+- Bootstrap DNS polling with c-ares.
+- Local source address binding for outbound HTTPS/bootstrap DNS.
+- EDNS-aware UDP truncation support.
+- Single-process, event-driven runtime using libev.
+- Logging, statistics, flight recorder, Munin plugin, systemd service, dashboard, Robot Framework tests, and CI workflow.
+
+---
+
 ## Tech Stack
 
 | Category | Technology |
@@ -32,19 +48,61 @@ NetX is designed to be small, fast, non caching, and suitable for local machines
 
 ---
 
-## Features
+## Project Structure
 
-- DNS-over-HTTPS proxy for standard UDP and TCP DNS clients.
-- Non-caching design; can sit in front of `dnsmasq` or another caching resolver.
-- RFC 8484 wire-format DoH support.
-- HTTP/2 by default through libcurl multi.
-- Optional HTTP/1.1 mode.
-- Optional HTTP/3 / QUIC mode when libcurl supports it.
-- Bootstrap DNS polling with c-ares.
-- Local source address binding for outbound HTTPS/bootstrap DNS.
-- EDNS-aware UDP truncation support.
-- Single-process, event-driven runtime using libev.
-- Logging, statistics, flight recorder, Munin plugin, systemd service, dashboard, Robot Framework tests, and CI workflow.
+```text
+NetX/
+├── .github/
+│   └── workflows/
+│       └── cmake.yml
+├── dashboard/
+│   ├── index.html
+│   └── server.py
+├── images/
+│   ├── architecture.png
+│   └── dashboard.png
+├── munin/
+│   ├── NetX.config
+│   └── NetX.plugin
+├── src/
+│   ├── dns_common.h
+│   ├── dns_listener.h
+│   ├── dns_listener_tcp.c
+│   ├── dns_listener_tcp.h
+│   ├── dns_listener_udp.c
+│   ├── dns_listener_udp.h
+│   ├── dns_poller.c
+│   ├── dns_poller.h
+│   ├── dns_truncate.c
+│   ├── dns_truncate.h
+│   ├── doh_proxy.c
+│   ├── doh_proxy.h
+│   ├── https_client.c
+│   ├── https_client.h
+│   ├── logging.c
+│   ├── logging.h
+│   ├── main.c
+│   ├── options.c
+│   ├── options.h
+│   ├── ring_buffer.c
+│   ├── ring_buffer.h
+│   ├── stat.c
+│   └── stat.h
+├── tests/
+│   ├── docker/
+│   │   ├── Dockerfile
+│   │   └── run_all_tests.sh
+│   └── robot/
+│       ├── DnsTcpClient.py
+│       ├── functional_tests.robot
+│       └── valgrind.supp
+├── .gitignore
+├── CMakeLists.txt
+├── LICENSE
+├── NetX.service.in
+├── README.md
+└── development_build_with_http3.sh
+```
 
 ---
 
@@ -338,64 +396,6 @@ tests/docker/run_all_tests.sh
 ```
 
 The test suite covers UDP, TCP, HTTP behavior, truncation behavior, source address binding, and Valgrind checks.
-
----
-
-## Project Structure
-
-```text
-NetX/
-├── .github/
-│   └── workflows/
-│       └── cmake.yml
-├── dashboard/
-│   ├── index.html
-│   └── server.py
-├── images/
-│   ├── architecture.png
-│   └── dashboard.png
-├── munin/
-│   ├── NetX.config
-│   └── NetX.plugin
-├── src/
-│   ├── dns_common.h
-│   ├── dns_listener.h
-│   ├── dns_listener_tcp.c
-│   ├── dns_listener_tcp.h
-│   ├── dns_listener_udp.c
-│   ├── dns_listener_udp.h
-│   ├── dns_poller.c
-│   ├── dns_poller.h
-│   ├── dns_truncate.c
-│   ├── dns_truncate.h
-│   ├── doh_proxy.c
-│   ├── doh_proxy.h
-│   ├── https_client.c
-│   ├── https_client.h
-│   ├── logging.c
-│   ├── logging.h
-│   ├── main.c
-│   ├── options.c
-│   ├── options.h
-│   ├── ring_buffer.c
-│   ├── ring_buffer.h
-│   ├── stat.c
-│   └── stat.h
-├── tests/
-│   ├── docker/
-│   │   ├── Dockerfile
-│   │   └── run_all_tests.sh
-│   └── robot/
-│       ├── DnsTcpClient.py
-│       ├── functional_tests.robot
-│       └── valgrind.supp
-├── .gitignore
-├── CMakeLists.txt
-├── LICENSE
-├── NetX.service.in
-├── README.md
-└── development_build_with_http3.sh
-```
 
 ---
 
