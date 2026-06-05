@@ -11,6 +11,8 @@ NetX is designed to be small, fast, non caching, and suitable for local machines
 <img src="./images/preview-1.png" alt="NetX Preview 1" width="100%" />
 <img src="./images/preview-2.png" alt="NetX Preview 2" width="100%" />
 
+---
+
 ## Tech Stack
 
 | Category | Technology |
