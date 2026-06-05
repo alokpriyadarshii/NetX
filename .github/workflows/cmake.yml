@@ -1,0 +1,53 @@
+name: CMake
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    # The CMake configure and build commands are platform agnostic and should work equally
+    # well on Windows or Mac.  You can convert this to a matrix build if you need
+    # cross-platform coverage.
+    # See: https://docs.github.com/en/free-pro-team@latest/actions/learn-github-actions/managing-complex-workflows#using-a-build-matrix
+    runs-on: ubuntu-24.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc-13, clang-18]
+
+    steps:
+    - uses: actions/checkout@main
+
+    - name: Update APT
+      run: sudo apt-get update
+
+    - name: Setup Dependencies
+      run: sudo apt-get install cmake libc-ares-dev libcurl4-openssl-dev libev-dev libsystemd-dev build-essential clang-tidy dnsutils python3-pip python3-venv valgrind ${{ matrix.compiler }}
+
+    - name: Setup Python Virtual Environment
+      run: python3 -m venv ${{github.workspace}}/venv
+
+    - name: Setup Robot Framework
+      run: ${{github.workspace}}/venv/bin/pip3 install robotframework
+
+    - name: Configure CMake
+      env:
+        CC: ${{ matrix.compiler }}
+      run: cmake -D CMAKE_BUILD_TYPE=Debug -D PYTHON3_EXE=${{github.workspace}}/venv/bin/python3 -B ${{github.workspace}}/
+
+    - name: Build
+      env:
+        CC: ${{ matrix.compiler }}
+      # Build your program with the given configuration
+      run: make -C ${{github.workspace}}/
+
+    - name: Test
+      run: make -C ${{github.workspace}}/ test ARGS="--verbose"
+
+    - uses: actions/upload-artifact@v4
+      if: ${{ success() || failure() }}
+      with:
+        name: robot-logs-${{ matrix.compiler }}
+        path: |
+          ${{github.workspace}}/tests/robot/*.html
+          ${{github.workspace}}/tests/robot/valgrind-*.log
