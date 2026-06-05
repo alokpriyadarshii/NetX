@@ -25,8 +25,10 @@ Start NetX
   [Arguments]  @{args}
   @{default_args} =  Create List  -v  -v  -v  -4  -p  ${PORT}
   @{proces_args} =  Combine Lists  ${default_args}  ${args}
+  Set Test Variable  ${netx_log}  ${CURDIR}/${TEST NAME}-netx.log
+  Remove File  ${netx_log}
   ${netx} =  Start Process  ${BINARY_PATH}  @{proces_args}
-  ...  stderr=STDOUT  alias=netx
+  ...  stdout=${netx_log}  stderr=STDOUT  alias=netx
   Set Test Variable  ${netx}
   Set Test Variable  ${dig_timeout}  2
   Set Test Variable  ${dig_retry}  0
@@ -41,8 +43,10 @@ Start NetX With Valgrind
   ...  --show-leak-kinds=all  --track-origins=yes  --keep-stacktraces=alloc-and-free
   ...  ${BINARY_PATH}  -v  -v  -v  -F  100  -4  -p  ${PORT}  # using flight recorder with smallest possible buffer size to test memory leak
   @{proces_args} =  Combine Lists  ${default_args}  ${args}
+  Set Test Variable  ${netx_log}  ${CURDIR}/${TEST NAME}-netx.log
+  Remove File  ${netx_log}
   ${netx} =  Start Process  valgrind  @{proces_args}
-  ...  stderr=STDOUT  alias=netx
+  ...  stdout=${netx_log}  stderr=STDOUT  alias=netx
   Set Test Variable  ${netx}
   Set Test Variable  ${dig_timeout}  10
   Set Test Variable  ${dig_retry}  2
@@ -57,14 +61,15 @@ Stop NetX
     ${result} =  Terminate Process  ${netx}  kill=true
   END
   Log  ${result.rc}
-  Log  ${result.stdout}
+  ${netx_output} =  Get File  ${netx_log}
+  Log  ${netx_output}
   Log  ${result.stderr}
   FOR  ${log}  ${times}  IN  &{expected_logs}
-    Should Contain X Times  ${result.stdout}  ${log}  ${times}
+    Should Contain X Times  ${netx_output}  ${log}  ${times}
   END
   FOR  ${log}  IN  @{error_logs}
     Run Keyword And Expect Error  not found
-    ...  Should Contain  ${result.stdout}  ${log}  msg=not found  values=False
+    ...  Should Contain  ${netx_output}  ${log}  msg=not found  values=False
   END
   Should Be Equal As Integers  ${result.rc}  0
 
