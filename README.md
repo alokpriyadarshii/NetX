@@ -11,6 +11,23 @@ NetX is designed to be small, fast, non caching, and suitable for local machines
 <img src="./images/preview-1.png" alt="NetX Preview 1" width="100%" />
 <img src="./images/preview-2.png" alt="NetX Preview 2" width="100%" />
 
+## Tech Stack
+
+| Category | Technology |
+|---|---|
+| Core Language | C |
+| Build System | CMake |
+| Networking | UDP, TCP, DNS Sockets |
+| DoH Client | libcurl |
+| Event Loop | libev |
+| DNS Resolution | c-ares |
+| Protocols | DNS, DNS-over-HTTPS, HTTP/2, HTTP/3 |
+| Dashboard | Python, HTML, CSS, JavaScript |
+| Service Management | systemd |
+| Monitoring | Munin, Custom Logging |
+| Testing | Robot Framework, Valgrind |
+| DevOps | Docker, GitHub Actions |
+
 ## Features
 
 - DNS-over-HTTPS proxy for standard UDP and TCP DNS clients.
@@ -433,5 +450,3 @@ __MACOSX/
 ```
 
 The `.gitignore` should keep build output and macOS metadata out of version control.
-
----
