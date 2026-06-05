@@ -28,6 +28,8 @@ NetX is designed to be small, fast, non caching, and suitable for local machines
 | Testing | Robot Framework, Valgrind |
 | DevOps | Docker, GitHub Actions |
 
+---
+
 ## Features
 
 - DNS-over-HTTPS proxy for standard UDP and TCP DNS clients.
