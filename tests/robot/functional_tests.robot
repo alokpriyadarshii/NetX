@@ -3,6 +3,7 @@ Documentation  Simple functional tests for NetX
 Library        OperatingSystem
 Library        Process
 Library        Collections
+Library        String
 Library        DnsTcpClient.py
 
 
@@ -25,7 +26,8 @@ Start NetX
   [Arguments]  @{args}
   @{default_args} =  Create List  -v  -v  -v  -4  -p  ${PORT}
   @{proces_args} =  Combine Lists  ${default_args}  ${args}
-  Set Test Variable  ${netx_log}  ${CURDIR}/${TEST NAME}-netx.log
+  ${netx_log_name} =  Replace String  ${TEST NAME}  /  _
+  Set Test Variable  ${netx_log}  ${CURDIR}/${netx_log_name}-netx.log
   Remove File  ${netx_log}
   ${netx} =  Start Process  ${BINARY_PATH}  @{proces_args}
   ...  stdout=${netx_log}  stderr=STDOUT  alias=netx
@@ -43,7 +45,8 @@ Start NetX With Valgrind
   ...  --show-leak-kinds=all  --track-origins=yes  --keep-stacktraces=alloc-and-free
   ...  ${BINARY_PATH}  -v  -v  -v  -F  100  -4  -p  ${PORT}  # using flight recorder with smallest possible buffer size to test memory leak
   @{proces_args} =  Combine Lists  ${default_args}  ${args}
-  Set Test Variable  ${netx_log}  ${CURDIR}/${TEST NAME}-netx.log
+  ${netx_log_name} =  Replace String  ${TEST NAME}  /  _
+  Set Test Variable  ${netx_log}  ${CURDIR}/${netx_log_name}-netx.log
   Remove File  ${netx_log}
   ${netx} =  Start Process  valgrind  @{proces_args}
   ...  stdout=${netx_log}  stderr=STDOUT  alias=netx
