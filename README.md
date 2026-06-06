@@ -15,7 +15,7 @@ NetX is designed to be small, fast, non caching, and suitable for local machines
 
 ## Features
 
-- DNS-over-HTTPS proxy for standard UDP and TCP DNS clients.
+- DNS over HTTPS proxy for standard UDP and TCP DNS clients.
 - Non-caching design; can sit in front of `dnsmasq` or another caching resolver.
 - RFC 8484 wire-format DoH support.
 - HTTP/2 by default through libcurl multi.
@@ -23,8 +23,8 @@ NetX is designed to be small, fast, non caching, and suitable for local machines
 - Optional HTTP/3 / QUIC mode when libcurl supports it.
 - Bootstrap DNS polling with c-ares.
 - Local source address binding for outbound HTTPS/bootstrap DNS.
-- EDNS-aware UDP truncation support.
-- Single-process, event-driven runtime using libev.
+- EDNS aware UDP truncation support.
+- Single process, event driven runtime using libev.
 - Logging, statistics, flight recorder, Munin plugin, systemd service, dashboard, Robot Framework tests, and CI workflow.
 
 ---
@@ -39,7 +39,7 @@ NetX is designed to be small, fast, non caching, and suitable for local machines
 | DoH Client | libcurl |
 | Event Loop | libev |
 | DNS Resolution | c-ares |
-| Protocols | DNS, DNS-over-HTTPS, HTTP/2, HTTP/3 |
+| Protocols | DNS, DNS over HTTPS, HTTP/2, HTTP/3 |
 | Dashboard | Python, HTML, CSS, JavaScript |
 | Service Management | systemd |
 | Monitoring | Munin, Custom Logging |
