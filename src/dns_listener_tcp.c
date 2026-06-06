@@ -117,6 +117,9 @@ static void remove_client(struct tcp_client_s * client) {
 static int get_dns_request(struct tcp_client_s *client,
     char ** dns_req, uint16_t * req_size) {
   // check if whole request is available
+  if (client->input_buffer_used < sizeof(uint16_t)) {
+    return 0;  // Partial length prefix
+  }
   *req_size = ntohs(*((uint16_t*)client->input_buffer));
   uint16_t data_size = sizeof(uint16_t) + *req_size;
   if (data_size > client->input_buffer_used) {
