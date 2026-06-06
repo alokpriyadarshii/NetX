@@ -235,6 +235,9 @@ static void accept_cb(struct ev_loop __attribute__((unused)) *loop,
     ELOG("Failed to accept TCP client: %s", strerror(errno));
     return;
   }
+  if (client_sock == -1) {
+    return;
+  }
 
   d->client_id++;
   d->client_count++;
