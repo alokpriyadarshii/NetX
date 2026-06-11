@@ -63,8 +63,8 @@ NetX/
 ├── benchmarks/
 │   └── benchmark_ring_buffer.c
 ├── images/
-│   ├── architecture.png
-│   └── dashboard.png
+│   ├── preview-1.png
+│   └── preview-2.png
 ├── munin/
 │   ├── NetX.config
 │   └── NetX.plugin
@@ -507,4 +507,3 @@ Fallback to HTTP/1.1:
 ```bash
 ./build/NetX -x
 ```
-
