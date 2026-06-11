@@ -21,11 +21,12 @@ NetX is designed to be small, fast, non caching, and suitable for local machines
 - HTTP/2 by default through libcurl multi.
 - Optional HTTP/1.1 mode.
 - Optional HTTP/3 / QUIC mode when libcurl supports it.
+- Explicit worker threading with independent libev/libcurl loops.
 - Bootstrap DNS polling with c-ares.
 - Local source address binding for outbound HTTPS/bootstrap DNS.
 - EDNS aware UDP truncation support.
 - Single process, event driven runtime using libev.
-- Logging, statistics, flight recorder, Munin plugin, systemd service, dashboard, Robot Framework tests, and CI workflow.
+- Logging, statistics, flight recorder, Munin plugin, systemd service, dashboard, Robot Framework tests, sanitizer/fuzzer CI, and benchmark proof artifacts.
 
 ---
 
@@ -44,6 +45,7 @@ NetX is designed to be small, fast, non caching, and suitable for local machines
 | Service Management | systemd |
 | Monitoring | Munin, Custom Logging |
 | Testing | Robot Framework, Valgrind |
+| Hardening | ASan, UBSan, libFuzzer |
 | DevOps | Docker, GitHub Actions |
 
 ---
@@ -58,6 +60,8 @@ NetX/
 ├── dashboard/
 │   ├── index.html
 │   └── server.py
+├── benchmarks/
+│   └── benchmark_ring_buffer.c
 ├── images/
 │   ├── architecture.png
 │   └── dashboard.png
@@ -92,10 +96,15 @@ NetX/
 │   ├── docker/
 │   │   ├── Dockerfile
 │   │   └── run_all_tests.sh
+│   ├── fuzz/
+│   │   ├── fuzz_dns_truncate.c
+│   │   └── fuzz_ring_buffer.c
 │   └── robot/
 │       ├── DnsTcpClient.py
 │       ├── functional_tests.robot
 │       └── valgrind.supp
+├── tools/
+│   └── benchmark_proof.sh
 ├── .gitignore
 ├── CMakeLists.txt
 ├── LICENSE
@@ -190,6 +199,12 @@ Show help:
 ./build/NetX -a 127.0.0.1 -p 5053 -r https://dns.google/dns-query -v -v
 ```
 
+Run with four worker threads:
+
+```bash
+./build/NetX -a 127.0.0.1 -p 5053 -W 4 -r https://dns.google/dns-query
+```
+
 Test with `dig`:
 
 ```bash
@@ -258,6 +273,58 @@ sudo ./build/NetX \
 ```
 
 This requires a libcurl build with HTTP/3 support.
+
+### Explicit worker threads
+
+Use `-W <workers>` to run multiple independent listener workers in one process.
+Each worker owns its own libev loop, libcurl multi handle, DNS poller, UDP socket,
+and TCP listener. On platforms with `SO_REUSEPORT`, the kernel distributes UDP
+datagrams and TCP accepts across workers.
+
+```bash
+./build/NetX -W 4 -T 100
+```
+
+The default is `-W 1`.
+
+---
+
+## Hardening
+
+### Sanitizers
+
+```bash
+cmake -S . -B build-sanitize \
+  -D CMAKE_BUILD_TYPE=Debug \
+  -D NETX_ENABLE_SANITIZERS=ON \
+  -D USE_CLANG_TIDY=OFF
+cmake --build build-sanitize
+ctest --test-dir build-sanitize --output-on-failure
+```
+
+### Fuzzing
+
+Fuzz targets require Clang because they use libFuzzer.
+
+```bash
+CC=clang cmake -S . -B build-fuzz \
+  -D CMAKE_BUILD_TYPE=Debug \
+  -D NETX_ENABLE_SANITIZERS=ON \
+  -D NETX_BUILD_FUZZERS=ON \
+  -D USE_CLANG_TIDY=OFF
+cmake --build build-fuzz
+ctest --test-dir build-fuzz --output-on-failure
+```
+
+### Benchmark proof
+
+```bash
+./tools/benchmark_proof.sh
+cat build/benchmarks/netx_benchmark_proof.json
+```
+
+The GitHub Actions workflow also uploads `netx_benchmark_proof.json` as the
+`netx-benchmark-proof` artifact.
 
 ### Use an HTTP/SOCKS proxy
 
@@ -440,5 +507,4 @@ Fallback to HTTP/1.1:
 ```bash
 ./build/NetX -x
 ```
-
 

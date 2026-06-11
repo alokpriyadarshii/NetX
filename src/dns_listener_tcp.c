@@ -284,6 +284,11 @@ static int get_tcp_listen_sock(struct addrinfo *listen_addrinfo) {
   if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1) {
     ELOG("Reuse address failed: %s (%d)", strerror(errno), errno);
   }
+#ifdef SO_REUSEPORT
+  if (setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(yes)) == -1) {
+    ELOG("Reuse port failed: %s (%d)", strerror(errno), errno);
+  }
+#endif
 
   uint16_t port = 0;
   char ipstr[INET6_ADDRSTRLEN];

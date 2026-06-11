@@ -9,6 +9,7 @@ struct Options {
   int listen_port;
 
   int tcp_client_limit;
+  int worker_count;
 
   // Logfile.
   const char *logfile;

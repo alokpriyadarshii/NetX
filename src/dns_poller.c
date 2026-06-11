@@ -1,9 +1,37 @@
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <pthread.h>
 #include <string.h>
 
 #include "dns_poller.h"
 #include "logging.h"
+
+static pthread_mutex_t ares_library_mutex = PTHREAD_MUTEX_INITIALIZER; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+static unsigned ares_library_refs = 0; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+
+static void ares_library_acquire(void) {
+  pthread_mutex_lock(&ares_library_mutex);
+  if (ares_library_refs == 0) {
+    int r = ares_library_init(ARES_LIB_INIT_ALL);
+    if (r != ARES_SUCCESS) {
+      pthread_mutex_unlock(&ares_library_mutex);
+      FLOG("ares_library_init error: %s", ares_strerror(r));
+    }
+  }
+  ares_library_refs++;
+  pthread_mutex_unlock(&ares_library_mutex);
+}
+
+static void ares_library_release(void) {
+  pthread_mutex_lock(&ares_library_mutex);
+  if (ares_library_refs > 0) {
+    ares_library_refs--;
+    if (ares_library_refs == 0) {
+      ares_library_cleanup();
+    }
+  }
+  pthread_mutex_unlock(&ares_library_mutex);
+}
 
 static void sock_cb(struct ev_loop __attribute__((unused)) *loop,
                     ev_io *w, int revents) {
@@ -213,10 +241,7 @@ void dns_poller_init(dns_poller_t *d, struct ev_loop *loop,
                      const char *source_addr,
                      const char *hostname,
                      int family, dns_poller_cb cb, void *cb_data) {
-  int r = ares_library_init(ARES_LIB_INIT_ALL);
-  if (r != ARES_SUCCESS) {
-    FLOG("ares_library_init error: %s", ares_strerror(r));
-  }
+  ares_library_acquire();
 
   struct ares_options options = {
     .timeout = POLLER_QUERY_TIMEOUT_MS,
@@ -226,7 +251,7 @@ void dns_poller_init(dns_poller_t *d, struct ev_loop *loop,
   };
   int optmask = ARES_OPT_TIMEOUTMS | ARES_OPT_TRIES | ARES_OPT_SOCK_STATE_CB;
 
-  r = ares_init_options(&d->ares, &options, optmask);
+  int r = ares_init_options(&d->ares, &options, optmask);
   if (r != ARES_SUCCESS) {
     FLOG("ares_init_options error: %s", ares_strerror(r));
   }
@@ -268,6 +293,6 @@ void dns_poller_init(dns_poller_t *d, struct ev_loop *loop,
 void dns_poller_cleanup(dns_poller_t *d) {
   ares_destroy(d->ares);
   ev_timer_stop(d->loop, &d->timer);
-  ares_library_cleanup();
+  ares_library_release();
   free(d->io_events);
 }

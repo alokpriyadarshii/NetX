@@ -17,13 +17,15 @@
 
 enum {
 DEFAULT_HTTP_VERSION = 2,
-MAX_TCP_CLIENTS = 200
+MAX_TCP_CLIENTS = 200,
+MAX_WORKERS = 64
 };
 
 void options_init(struct Options *opt) {
   opt->listen_addr = "127.0.0.1";
   opt->listen_port = 5053;
   opt->tcp_client_limit = 20;
+  opt->worker_count = 1;
   opt->logfile = "-";
   opt->logfd = STDOUT_FILENO;
   opt->loglevel = LOG_ERROR;
@@ -59,7 +61,7 @@ int parse_int(char * str) {
 
 enum OptionsParseResult options_parse_args(struct Options *opt, int argc, char **argv) {
   int c = 0;
-  while ((c = getopt(argc, argv, "a:c:p:T:du:g:b:i:4r:e:t:l:vxqm:L:s:S:C:F:hV")) != -1) {
+  while ((c = getopt(argc, argv, "a:c:p:T:W:du:g:b:i:4r:e:t:l:vxqm:L:s:S:C:F:hV")) != -1) {
     switch (c) {
     case 'a': // listen_addr
       opt->listen_addr = optarg;
@@ -72,6 +74,9 @@ enum OptionsParseResult options_parse_args(struct Options *opt, int argc, char *
       break;
     case 'T': // tcp_client_limit
       opt->tcp_client_limit = parse_int(optarg);
+      break;
+    case 'W': // worker_count
+      opt->worker_count = parse_int(optarg);
       break;
     case 'd': // daemonize
       opt->daemonize = 1;
@@ -218,13 +223,17 @@ enum OptionsParseResult options_parse_args(struct Options *opt, int argc, char *
     printf("TCP client limit must be between 0 and %u.\n", MAX_TCP_CLIENTS);
     return OPR_OPTION_ERROR;
   }
+  if (opt->worker_count < 1 || opt->worker_count > MAX_WORKERS) {
+    printf("Worker thread count must be between 1 and %u.\n", MAX_WORKERS);
+    return OPR_OPTION_ERROR;
+  }
   return OPR_SUCCESS;
 }
 
 void options_show_usage(int __attribute__((unused)) argc, char **argv) {
   struct Options defaults;
   options_init(&defaults);
-  printf("Usage: %s [-a <listen_addr>] [-p <listen_port>] [-T <tcp_client_limit>]\n", argv[0]);
+  printf("Usage: %s [-a <listen_addr>] [-p <listen_port>] [-T <tcp_client_limit>] [-W <workers>]\n", argv[0]);
   printf("        [-b <dns_servers>] [-i <polling_interval>] [-4]\n");
   printf("        [-r <resolver_url>] [-t <proxy_server>] [-S <source_addr>] [-x] [-q] [-C <ca_path>] [-c <dscp_codepoint>]\n");
   printf("        [-d] [-u <user>] [-g <group>] \n");
@@ -236,6 +245,8 @@ void options_show_usage(int __attribute__((unused)) argc, char **argv) {
          defaults.listen_port);
   printf("  -T tcp_client_limit    Number of TCP clients to serve. (Default: %d, Disabled: 0, Min: 1, Max: %d)\n",
          defaults.tcp_client_limit, MAX_TCP_CLIENTS);
+  printf("  -W workers             Number of worker threads/event loops. (Default: %d, Min: 1, Max: %d)\n",
+         defaults.worker_count, MAX_WORKERS);
   printf("\n DNS client\n");
   printf("  -b dns_servers         Comma-separated IPv4/v6 addresses and ports (addr:port)\n");
   printf("                         of DNS servers to resolve resolver host (e.g. dns.google).\n"\

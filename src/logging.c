@@ -1,4 +1,5 @@
 #include <inttypes.h>
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -21,6 +22,7 @@ static ev_signal sigusr2;                            // NOLINT(cppcoreguidelines
 static ev_async flight_recorder_async;               // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 static struct ev_loop *logging_loop = NULL;          // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 static struct ring_buffer * flight_recorder = NULL;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+static pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
 static const char * const SeverityStr[] = {
   "[D]",
@@ -34,18 +36,19 @@ static const char * const SeverityStr[] = {
 void logging_timer_cb(struct ev_loop __attribute__((unused)) *loop,
     ev_timer __attribute__((unused)) *w,
     int __attribute__((unused)) revents) {
+  pthread_mutex_lock(&log_mutex);
   if (logfile) {
     (void)fflush(logfile);
   }
+  pthread_mutex_unlock(&log_mutex);
 }
 
 void logging_flight_recorder_dump(void) {
+  pthread_mutex_lock(&log_mutex);
   if (flight_recorder) {
-    ILOG("Flight recorder dump");  // will be also at the end of the dump :)
     ring_buffer_dump(flight_recorder, logfile);
-  } else {
-    ILOG("Flight recorder is disabled");
   }
+  pthread_mutex_unlock(&log_mutex);
 }
 
 static void logging_flight_recorder_dump_async_cb(struct ev_loop __attribute__((unused)) *loop,
@@ -86,6 +89,7 @@ void logging_events_cleanup(struct ev_loop *loop) {
 }
 
 void logging_init(int fd, int level, uint32_t flight_recorder_size) {
+  pthread_mutex_lock(&log_mutex);
   if (logfile) {
     (void)fclose(logfile);
     logfile = NULL;
@@ -98,9 +102,11 @@ void logging_init(int fd, int level, uint32_t flight_recorder_size) {
   loglevel = level;
 
   ring_buffer_init(&flight_recorder, flight_recorder_size);
+  pthread_mutex_unlock(&log_mutex);
 }
 
 void logging_cleanup(void) {
+  pthread_mutex_lock(&log_mutex);
   if (flight_recorder) {
     ring_buffer_free(&flight_recorder);
     flight_recorder = NULL;
@@ -110,19 +116,27 @@ void logging_cleanup(void) {
     (void)fclose(logfile);
   }
   logfile = NULL;
+  pthread_mutex_unlock(&log_mutex);
 }
 
 int logging_debug_enabled(void) {
-  return loglevel <= LOG_DEBUG || flight_recorder;
+  pthread_mutex_lock(&log_mutex);
+  const int enabled = loglevel <= LOG_DEBUG || flight_recorder;
+  pthread_mutex_unlock(&log_mutex);
+  return enabled;
 }
 
 // NOLINTNEXTLINE(misc-no-recursion) because of severity check
 void _log(const char *file, int line, int severity, const char *fmt, ...) {
-  if (severity < loglevel && !flight_recorder) {
-    return;
-  }
   if (severity < 0 || severity >= LOG_MAX) {
-    FLOG("Unknown log severity: %d", severity);
+    abort();
+  }
+
+  pthread_mutex_lock(&log_mutex);
+
+  if (severity < loglevel && !flight_recorder) {
+    pthread_mutex_unlock(&log_mutex);
+    return;
   }
   if (!logfile) {
     logfile = fdopen(STDOUT_FILENO, "w");
@@ -163,6 +177,7 @@ void _log(const char *file, int line, int severity, const char *fmt, ...) {
   }
 
   if (severity < loglevel) {
+    pthread_mutex_unlock(&log_mutex);
     return;
   }
   (void)fprintf(logfile, "%s\n", buff);
@@ -180,4 +195,5 @@ void _log(const char *file, int line, int severity, const char *fmt, ...) {
     exit(1);
 #endif
   }
+  pthread_mutex_unlock(&log_mutex);
 }

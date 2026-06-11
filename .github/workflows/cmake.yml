@@ -16,7 +16,7 @@ jobs:
         compiler: [gcc-13, clang-18]
 
     steps:
-    - uses: actions/checkout@main
+    - uses: actions/checkout@v4
 
     - name: Update APT
       run: sudo apt-get update
@@ -52,3 +52,51 @@ jobs:
           ${{github.workspace}}/tests/robot/*.html
           ${{github.workspace}}/tests/robot/valgrind-*.log
           ${{github.workspace}}/tests/robot/*-netx.log
+
+  sanitizer-fuzz:
+    runs-on: ubuntu-24.04
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Update APT
+      run: sudo apt-get update
+
+    - name: Setup Dependencies
+      run: sudo apt-get install -y cmake libc-ares-dev libcurl4-openssl-dev libev-dev libsystemd-dev build-essential clang-18
+
+    - name: Configure sanitizer and fuzz build
+      env:
+        CC: clang-18
+      run: >
+        cmake -S ${{github.workspace}} -B ${{github.workspace}}/build-sanitize
+        -D CMAKE_BUILD_TYPE=Debug
+        -D NETX_ENABLE_SANITIZERS=ON
+        -D NETX_BUILD_FUZZERS=ON
+        -D USE_CLANG_TIDY=OFF
+
+    - name: Build sanitizer and fuzz targets
+      run: cmake --build ${{github.workspace}}/build-sanitize
+
+    - name: Run sanitizer and fuzz smoke tests
+      run: ctest --test-dir ${{github.workspace}}/build-sanitize --output-on-failure
+
+  benchmark-proof:
+    runs-on: ubuntu-24.04
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Update APT
+      run: sudo apt-get update
+
+    - name: Setup Dependencies
+      run: sudo apt-get install -y cmake build-essential
+
+    - name: Generate benchmark proof
+      run: ${{github.workspace}}/tools/benchmark_proof.sh
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: netx-benchmark-proof
+        path: ${{github.workspace}}/build/benchmarks/netx_benchmark_proof.json

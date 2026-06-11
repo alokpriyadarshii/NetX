@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 project(NetX C)
 
 include(CheckIncludeFile)
+include(CTest)
 
 # FUNCTIONS
 
@@ -39,6 +40,10 @@ endif()
 
 set(SERVICE_EXTRA_OPTIONS "")
 set(SERVICE_TYPE "simple")
+
+option(NETX_ENABLE_SANITIZERS "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(NETX_BUILD_FUZZERS "Build libFuzzer smoke targets" OFF)
+option(NETX_BUILD_BENCHMARKS "Build repeatable benchmark proof targets" OFF)
 
 # VERSION
 # It is possible to define external default value like: cmake -DSW_VERSION=1.2-custom
@@ -79,6 +84,7 @@ endif()
 
 find_path(LIBCARES_INCLUDE_DIR ares.h)
 find_path(LIBEV_INCLUDE_DIR ev.h)
+find_package(Threads REQUIRED)
 
 if(CUSTOM_LIBCURL_INSTALL_PATH)
   message(STATUS "Using custom libcurl from: ${CUSTOM_LIBCURL_INSTALL_PATH}")
@@ -122,6 +128,17 @@ else()
   message(STATUS "Not using clang-tidy.")
 endif()
 
+# HARDENING
+
+if(NETX_ENABLE_SANITIZERS)
+  if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address,undefined")
+  else()
+    message(FATAL_ERROR "NETX_ENABLE_SANITIZERS requires GCC or Clang")
+  endif()
+endif()
+
 # BUILD
 
 # The main binary
@@ -129,7 +146,7 @@ set(TARGET_NAME "NetX")
 aux_source_directory(src SRC_LIST)
 set(SRC_LIST ${SRC_LIST})
 add_executable(${TARGET_NAME} ${SRC_LIST})
-set(LIBS ${LIBS} cares curl ev resolv)
+set(LIBS ${LIBS} cares curl ev resolv Threads::Threads)
 target_link_libraries(${TARGET_NAME} ${LIBS})
 set_property(TARGET ${TARGET_NAME} PROPERTY C_STANDARD 11)
 
@@ -168,6 +185,50 @@ configure_file(${TARGET_NAME}.service.in ${TARGET_NAME}.service)
 
 install(FILES ${CMAKE_BINARY_DIR}/${TARGET_NAME}.service
         DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/systemd/system/)
+
+# FUZZING
+
+if(NETX_BUILD_FUZZERS)
+  if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang")
+    message(FATAL_ERROR "NETX_BUILD_FUZZERS requires Clang for -fsanitize=fuzzer")
+  endif()
+
+  add_executable(fuzz_ring_buffer
+    tests/fuzz/fuzz_ring_buffer.c
+    src/ring_buffer.c)
+  target_compile_options(fuzz_ring_buffer PRIVATE -fsanitize=fuzzer,address,undefined)
+  set_target_properties(fuzz_ring_buffer PROPERTIES
+    LINK_FLAGS "-fsanitize=fuzzer,address,undefined")
+  target_include_directories(fuzz_ring_buffer PRIVATE src)
+  set_property(TARGET fuzz_ring_buffer PROPERTY C_STANDARD 11)
+
+  add_executable(fuzz_dns_truncate
+    tests/fuzz/fuzz_dns_truncate.c
+    src/dns_truncate.c
+    src/logging.c
+    src/ring_buffer.c)
+  target_compile_options(fuzz_dns_truncate PRIVATE -fsanitize=fuzzer,address,undefined)
+  set_target_properties(fuzz_dns_truncate PROPERTIES
+    LINK_FLAGS "-fsanitize=fuzzer,address,undefined")
+  target_include_directories(fuzz_dns_truncate PRIVATE src)
+  target_link_libraries(fuzz_dns_truncate cares ev Threads::Threads)
+  set_property(TARGET fuzz_dns_truncate PROPERTY C_STANDARD 11)
+
+  add_test(NAME fuzz-ring-buffer-smoke
+           COMMAND fuzz_ring_buffer -runs=256)
+  add_test(NAME fuzz-dns-truncate-smoke
+           COMMAND fuzz_dns_truncate -runs=256)
+endif()
+
+# BENCHMARKS
+
+if(NETX_BUILD_BENCHMARKS)
+  add_executable(benchmark_ring_buffer
+    benchmarks/benchmark_ring_buffer.c
+    src/ring_buffer.c)
+  target_include_directories(benchmark_ring_buffer PRIVATE src)
+  set_property(TARGET benchmark_ring_buffer PROPERTY C_STANDARD 11)
+endif()
 
 # TESTING
 

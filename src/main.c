@@ -5,7 +5,9 @@
 #include <ctype.h>
 #include <errno.h>
 #include <grp.h>
+#include <pthread.h>
 #include <pwd.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -23,6 +25,24 @@
 #include "logging.h"
 #include "options.h"
 #include "stat.h"
+
+typedef struct netx_worker netx_worker_t;
+
+typedef struct {
+  netx_worker_t *workers;
+  int worker_count;
+} shutdown_group_t;
+
+struct netx_worker {
+  int id;
+  int primary;
+  options_t *opt;
+  shutdown_group_t *shutdown_group;
+  struct ev_loop *loop;
+  ev_async shutdown_async;
+  pthread_t thread;
+  char resolver_hostname[255];
+};
 
 static int is_ipv4_address(char *str) {
     struct in6_addr addr;
@@ -56,12 +76,7 @@ static int hostname_from_url(const char* url_in,
   return res;
 }
 
-static void signal_shutdown_cb(struct ev_loop *loop,
-                               ev_signal __attribute__((__unused__)) *w,
-                               int __attribute__((__unused__)) revents) {
-  ILOG("Shutting down gracefully. To force exit, send signal again.");
-  ev_break(loop, EVBREAK_ALL);
-}
+static void request_worker_shutdown(shutdown_group_t *group);
 
 static void sigpipe_cb(struct ev_loop __attribute__((__unused__)) *loop,
                        ev_signal __attribute__((__unused__)) *w,
@@ -128,6 +143,176 @@ static const char * sw_version(void) {
 #else
   return "2025.8.26-atLeast";  // update date sometimes, like 1-2 times a year
 #endif
+}
+
+static void set_listen_port(struct addrinfo *listen_addrinfo, int listen_port) {
+  if (listen_addrinfo->ai_family == AF_INET) {
+    ((struct sockaddr_in*) listen_addrinfo->ai_addr)->sin_port = htons((uint16_t)listen_port);
+  } else if (listen_addrinfo->ai_family == AF_INET6) {
+    ((struct sockaddr_in6*) listen_addrinfo->ai_addr)->sin6_port = htons((uint16_t)listen_port);
+  }
+}
+
+static void shutdown_async_cb(struct ev_loop *loop,
+                              ev_async __attribute__((__unused__)) *w,
+                              int __attribute__((__unused__)) revents) {
+  ev_break(loop, EVBREAK_ALL);
+}
+
+static void request_worker_shutdown(shutdown_group_t *group) {
+  for (int i = 0; i < group->worker_count; i++) {
+    if (group->workers[i].loop != NULL) {
+      ev_async_send(group->workers[i].loop, &group->workers[i].shutdown_async);
+    }
+  }
+}
+
+static void signal_shutdown_cb(struct ev_loop __attribute__((__unused__)) *loop,
+                               ev_signal *w,
+                               int __attribute__((__unused__)) revents) {
+  shutdown_group_t *group = (shutdown_group_t *)w->data;
+  ILOG("Shutting down gracefully. To force exit, send signal again.");
+  request_worker_shutdown(group);
+}
+
+static void worker_start_dns_poller(netx_worker_t *worker,
+                                    doh_proxy_t *proxy,
+                                    dns_poller_t *dns_poller,
+                                    uint8_t *using_dns_poller) {
+  options_t *opt = worker->opt;
+
+  if (proxy_supports_name_resolution(opt->curl_proxy)) {
+    if (worker->primary) {
+      systemd_notify_ready(NULL);
+    }
+    return;
+  }
+
+  if (hostname_from_url(opt->resolver_url, worker->resolver_hostname,
+                        sizeof(worker->resolver_hostname))) {
+    *using_dns_poller = 1;
+    doh_proxy_await_bootstrap(proxy);
+    if (worker->primary) {
+      doh_proxy_set_on_ready(proxy, systemd_notify_ready, NULL);
+    }
+    dns_poller_init(dns_poller, worker->loop, opt->bootstrap_dns,
+                    opt->bootstrap_dns_polling_interval, opt->source_addr,
+                    worker->resolver_hostname,
+                    opt->ipv4 ? AF_INET : AF_UNSPEC,
+                    doh_proxy_handle_resolver_update, proxy);
+    ILOG("Worker %d DNS polling initialized for '%s'",
+         worker->id, worker->resolver_hostname);
+  } else {
+    ILOG("Resolver prefix '%s' doesn't appear to contain a "
+         "hostname. DNS polling disabled.", opt->resolver_url);
+    if (worker->primary) {
+      systemd_notify_ready(NULL);
+    }
+  }
+}
+
+static void run_worker(netx_worker_t *worker) {
+  options_t *opt = worker->opt;
+  worker->loop = ev_loop_new(0);
+  if (worker->loop == NULL) {
+    FLOG("Worker %d failed to create event loop", worker->id);
+  }
+
+  ev_async_init(&worker->shutdown_async, shutdown_async_cb);
+  ev_async_start(worker->loop, &worker->shutdown_async);
+
+  ev_signal sigpipe;
+  ev_signal sigint;
+  ev_signal sigterm;
+  if (worker->primary) {
+    ev_signal_init(&sigpipe, sigpipe_cb, SIGPIPE);
+    ev_signal_start(worker->loop, &sigpipe);
+
+    ev_signal_init(&sigint, signal_shutdown_cb, SIGINT);
+    sigint.data = worker->shutdown_group;
+    ev_signal_start(worker->loop, &sigint);
+
+    ev_signal_init(&sigterm, signal_shutdown_cb, SIGTERM);
+    sigterm.data = worker->shutdown_group;
+    ev_signal_start(worker->loop, &sigterm);
+
+    logging_events_init(worker->loop);
+  }
+
+  stat_t stat;
+  stat_init(&stat, worker->loop, opt->stats_interval);
+  stat_t *stat_ptr = (opt->stats_interval ? &stat : NULL);
+
+  https_client_t https_client;
+  https_client_init(&https_client, opt, stat_ptr, worker->loop);
+
+  doh_proxy_t *proxy = doh_proxy_create(worker->loop, &https_client,
+                                        opt->resolver_url, stat_ptr);
+
+  struct addrinfo *listen_addrinfo = get_listen_address(opt->listen_addr);
+  set_listen_port(listen_addrinfo, opt->listen_port);
+
+  dns_listener_t *udp_listener =
+      dns_udp_listener_create(worker->loop, listen_addrinfo,
+                              doh_proxy_handle_request, proxy);
+
+  dns_listener_t *tcp_listener = NULL;
+  if (opt->tcp_client_limit > 0) {
+    tcp_listener = dns_tcp_listener_create(worker->loop, listen_addrinfo,
+                                           (uint16_t)opt->tcp_client_limit,
+                                           doh_proxy_handle_request, proxy);
+  }
+
+  freeaddrinfo(listen_addrinfo);
+  listen_addrinfo = NULL;
+
+  dns_poller_t dns_poller;
+  uint8_t using_dns_poller = 0;
+  worker_start_dns_poller(worker, proxy, &dns_poller, &using_dns_poller);
+
+  ILOG("Worker %d started", worker->id);
+  ev_run(worker->loop, 0);
+  DLOG("Worker %d loop breaked", worker->id);
+
+  if (using_dns_poller) {
+    dns_poller_cleanup(&dns_poller);
+  }
+
+  if (worker->primary) {
+    logging_events_cleanup(worker->loop);
+    ev_signal_stop(worker->loop, &sigterm);
+    ev_signal_stop(worker->loop, &sigint);
+    ev_signal_stop(worker->loop, &sigpipe);
+  }
+  ev_async_stop(worker->loop, &worker->shutdown_async);
+  udp_listener->stop(udp_listener);
+  if (tcp_listener != NULL) {
+    tcp_listener->stop(tcp_listener);
+  }
+  stat_stop(&stat);
+
+  DLOG("Worker %d re-entering loop", worker->id);
+  ev_run(worker->loop, 0);
+  DLOG("Worker %d loop finished all events", worker->id);
+
+  udp_listener->destroy(udp_listener);
+  if (tcp_listener != NULL) {
+    tcp_listener->destroy(tcp_listener);
+  }
+  // The CURLOPT_RESOLVE list owned by NetX must outlive in-flight curl
+  // easy handles, which is why https_client_cleanup runs first.
+  https_client_cleanup(&https_client);
+  doh_proxy_destroy(proxy);
+  stat_cleanup(&stat);
+
+  ev_loop_destroy(worker->loop);
+  worker->loop = NULL;
+  DLOG("Worker %d loop destroyed", worker->id);
+}
+
+static void *worker_thread_main(void *arg) {
+  run_worker((netx_worker_t *)arg);
+  return NULL;
 }
 
 int main(int argc, char *argv[]) {
@@ -199,42 +384,6 @@ int main(int argc, char *argv[]) {
     WLOG("IPv6 is not supported by current libcurl");
   }
 
-  // Note: This calls ev_default_loop(0) which never cleans up.
-  //       valgrind will report a leak. :(
-  struct ev_loop *loop = EV_DEFAULT;
-
-  stat_t stat;
-  stat_init(&stat, loop, opt.stats_interval);
-  stat_t *stat_ptr = (opt.stats_interval ? &stat : NULL);
-
-  https_client_t https_client;
-  https_client_init(&https_client, &opt, stat_ptr, loop);
-
-  doh_proxy_t *proxy = doh_proxy_create(loop, &https_client,
-                                        opt.resolver_url, stat_ptr);
-
-  struct addrinfo *listen_addrinfo = get_listen_address(opt.listen_addr);
-
-  if (listen_addrinfo->ai_family == AF_INET) {
-    ((struct sockaddr_in*) listen_addrinfo->ai_addr)->sin_port = htons((uint16_t)opt.listen_port);
-  } else if (listen_addrinfo->ai_family == AF_INET6) {
-    ((struct sockaddr_in6*) listen_addrinfo->ai_addr)->sin6_port = htons((uint16_t)opt.listen_port);
-  }
-
-  dns_listener_t *udp_listener =
-      dns_udp_listener_create(loop, listen_addrinfo,
-                              doh_proxy_handle_request, proxy);
-
-  dns_listener_t *tcp_listener = NULL;
-  if (opt.tcp_client_limit > 0) {
-    tcp_listener = dns_tcp_listener_create(loop, listen_addrinfo,
-                                           (uint16_t)opt.tcp_client_limit,
-                                           doh_proxy_handle_request, proxy);
-  }
-
-  freeaddrinfo(listen_addrinfo);
-  listen_addrinfo = NULL;
-
   if (opt.gid != (uid_t)-1 && setgroups(1, &opt.gid)) {
     FLOG("Failed to set groups");
   }
@@ -252,76 +401,44 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  ev_signal sigpipe;
-  ev_signal_init(&sigpipe, sigpipe_cb, SIGPIPE);
-  ev_signal_start(loop, &sigpipe);
+  netx_worker_t *workers = (netx_worker_t *)calloc((size_t)opt.worker_count,
+                                                   sizeof(netx_worker_t));
+  if (workers == NULL) {
+    FLOG("Out of mem");
+  }
+  shutdown_group_t shutdown_group = {
+    .workers = workers,
+    .worker_count = opt.worker_count,
+  };
 
-  ev_signal sigint;
-  ev_signal_init(&sigint, signal_shutdown_cb, SIGINT);
-  ev_signal_start(loop, &sigint);
+  for (int i = 0; i < opt.worker_count; i++) {
+    workers[i].id = i + 1;
+    workers[i].primary = (i == 0);
+    workers[i].opt = &opt;
+    workers[i].shutdown_group = &shutdown_group;
+  }
 
-  ev_signal sigterm;
-  ev_signal_init(&sigterm, signal_shutdown_cb, SIGTERM);
-  ev_signal_start(loop, &sigterm);
+  ILOG("Starting %d worker thread%s", opt.worker_count,
+       opt.worker_count == 1 ? "" : "s");
 
-  logging_events_init(loop);
-
-  dns_poller_t dns_poller;
-  uint8_t using_dns_poller = 0;
-  char hostname[255] = {0};  // Domain names shouldn't exceed 253 chars.
-  if (!proxy_supports_name_resolution(opt.curl_proxy)) {
-    if (hostname_from_url(opt.resolver_url, hostname, sizeof(hostname))) {
-      using_dns_poller = 1;
-      doh_proxy_await_bootstrap(proxy);
-      doh_proxy_set_on_ready(proxy, systemd_notify_ready, NULL);
-      dns_poller_init(&dns_poller, loop, opt.bootstrap_dns,
-                      opt.bootstrap_dns_polling_interval, opt.source_addr,
-                      hostname,
-                      opt.ipv4 ? AF_INET : AF_UNSPEC,
-                      doh_proxy_handle_resolver_update, proxy);
-      ILOG("DNS polling initialized for '%s'", hostname);
-    } else {
-      ILOG("Resolver prefix '%s' doesn't appear to contain a "
-           "hostname. DNS polling disabled.", opt.resolver_url);
-      systemd_notify_ready(NULL);
+  for (int i = 1; i < opt.worker_count; i++) {
+    int pthread_res = pthread_create(&workers[i].thread, NULL,
+                                     worker_thread_main, &workers[i]);
+    if (pthread_res != 0) {
+      FLOG("Failed to start worker %d: %s", workers[i].id, strerror(pthread_res));
     }
-  } else {
-    systemd_notify_ready(NULL);
   }
 
-  ev_run(loop, 0);
-  DLOG("loop breaked");
+  run_worker(&workers[0]);
 
-  if (using_dns_poller) {
-    dns_poller_cleanup(&dns_poller);
+  for (int i = 1; i < opt.worker_count; i++) {
+    int pthread_res = pthread_join(workers[i].thread, NULL);
+    if (pthread_res != 0) {
+      ELOG("Failed to join worker %d: %s", workers[i].id, strerror(pthread_res));
+    }
   }
 
-  logging_events_cleanup(loop);
-  ev_signal_stop(loop, &sigterm);
-  ev_signal_stop(loop, &sigint);
-  ev_signal_stop(loop, &sigpipe);
-  udp_listener->stop(udp_listener);
-  if (tcp_listener != NULL) {
-    tcp_listener->stop(tcp_listener);
-  }
-  stat_stop(&stat);
-
-  DLOG("re-entering loop");
-  ev_run(loop, 0);
-  DLOG("loop finished all events");
-
-  udp_listener->destroy(udp_listener);
-  if (tcp_listener != NULL) {
-    tcp_listener->destroy(tcp_listener);
-  }
-  // The CURLOPT_RESOLVE list owned by NetX must outlive in-flight curl
-  // easy handles, which is why https_client_cleanup runs first.
-  https_client_cleanup(&https_client);
-  doh_proxy_destroy(proxy);
-  stat_cleanup(&stat);
-
-  ev_loop_destroy(loop);
-  DLOG("loop destroyed");
+  free(workers);
 
   curl_global_cleanup();
   logging_cleanup();
