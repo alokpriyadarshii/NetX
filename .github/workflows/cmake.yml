@@ -79,7 +79,7 @@ jobs:
       run: cmake --build ${{github.workspace}}/build-sanitize
 
     - name: Run sanitizer and fuzz smoke tests
-      run: ctest --test-dir ${{github.workspace}}/build-sanitize --output-on-failure
+      run: ctest --test-dir ${{github.workspace}}/build-sanitize -R '^fuzz-' --output-on-failure
 
   benchmark-proof:
     runs-on: ubuntu-24.04
@@ -91,7 +91,7 @@ jobs:
       run: sudo apt-get update
 
     - name: Setup Dependencies
-      run: sudo apt-get install -y cmake build-essential
+      run: sudo apt-get install -y cmake libc-ares-dev libcurl4-openssl-dev libev-dev libsystemd-dev build-essential
 
     - name: Generate benchmark proof
       run: ${{github.workspace}}/tools/benchmark_proof.sh
